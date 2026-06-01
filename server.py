@@ -11,7 +11,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # --- TELEGRAM SETTINGS ---
 # Replace with your actual credentials
 TELEGRAM_BOT_TOKEN = ""
-TELEGRAM_CHAT_ID = ""  # Your personal chat ID or group ID
+TELEGRAM_CHAT_IDS = ["", ""]  # Your personal chat ID or group ID
 
 
 async def send_photo_to_telegram(file_path: str, caption: str):
@@ -25,16 +25,16 @@ async def send_photo_to_telegram(file_path: str, caption: str):
 
         # Prepare multipart/form-data request
         files = {"photo": (os.path.basename(file_path), file_content)}
-        data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption}
-
-        try:
-            response = await client.post(url, data=data, files=files, timeout=10)
-            if response.status_code != 200:
-                print(f"[TG ERROR] Send failed: {response.status_code} - {response.text}")
-            else:
-                print("[TG SUCCESS] Photo successfully sent to Telegram bot!")
-        except Exception as e:
-            print(f"[TG ERROR] Failed to connect to Telegram API: {e}")
+        for chat_id in TELEGRAM_CHAT_IDS:
+            data = {"chat_id": chat_id, "caption": caption}
+            try:
+                response = await client.post(url, data=data, files=files, timeout=10)
+                if response.status_code != 200:
+                    print(f"[TG ERROR] Failed for {chat_id}: {response.status_code}")
+                else:
+                    print(f"[TG SUCCESS] Photo sent to chat {chat_id}")
+            except Exception as e:
+                print(f"[TG ERROR] Connection failed for chat {chat_id}: {e}")
 
 
 @app.post("/items/")
