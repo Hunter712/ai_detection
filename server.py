@@ -1,27 +1,19 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+import os
 import aiofiles
-from datetime import datetime
+from fastapi import FastAPI, File, UploadFile
 
 app = FastAPI()
 
-
-class UserItem(BaseModel):
-    event: str
-    confidence: float
-    timestamp: str
+UPLOAD_DIR = "saved_photos"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @app.post("/items/")
-async def create_item(item: UserItem):
-    dt_object = datetime.fromtimestamp(int(item.timestamp))
-    readable_date = dt_object.strftime("%d.%m.%Y %H:%M:%S")
-    event_name = item.event
-    confidence_val = round(item.confidence, 2)
+async def create_item(photo: UploadFile = File(...)):
+    file_path = os.path.join(UPLOAD_DIR, photo.filename)
 
-    log_line = f"{readable_date} | {event_name} | {confidence_val}\n"
+    async with aiofiles.open(file_path, "wb") as f:
+        content = await photo.read()
+        await f.write(content)
 
-    async with aiofiles.open("items_db.txt", mode="a", encoding="utf-8") as f:
-        await f.write(log_line)
-
-    return {"message": "saved", "data": item}
+    return {"message": "saved", "filename": photo.filename}
