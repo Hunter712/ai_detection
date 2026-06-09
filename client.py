@@ -1,3 +1,9 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["TF_NUM_INTRAOP_THREADS"] = "2"
+os.environ["TF_NUM_INTEROP_THREADS"] = "2"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import time
 import logging
 import numpy as np
@@ -6,6 +12,7 @@ import requests
 from picamera2 import Picamera2
 from hailo_platform import (HEF, VDevice, HailoStreamInterface, ConfigureParams,
                             InputVStreamParams, OutputVStreamParams, FormatType, InferVStreams)
+from deepface import DeepFace
 
 # Configuration: Change this to your actual backend server IP and port
 SERVER_URL = ""
@@ -19,11 +26,11 @@ logging.basicConfig(
     datefmt=TIME_MASK
 )
 
-def send_detection_to_server(frame, confidence):
+def send_detection_to_server(frame, confidence, verdict):
     # 1. Format elements for the filename
     timestamp_file = time.strftime(TIME_MASK)
     conf_percent = f"{confidence * 100:.1f}"
-    filename = f"person_{timestamp_file}_{conf_percent}%.jpg"
+    filename = f"{verdict}_{timestamp_file}_{conf_percent}%.jpg"
 
     # 2. Encode the frame to JPEG directly in RAM
     success, encoded_image = cv2.imencode('.jpg', frame)
@@ -45,6 +52,46 @@ def send_detection_to_server(frame, confidence):
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Failed to connect to server: {e}")
+
+def classify_person_optimized(image_to_check: str, database_dir: str):
+    try:
+        results = DeepFace.find(
+            img_path=image_to_check,
+            db_path=database_dir,
+            model_name="ArcFace",
+            detector_backend="ssd",
+            enforce_detection=False,
+        )
+        if not results:
+            return "no_face"
+
+        verdicts = []
+        for face_df in results:
+
+            if not face_df.empty:
+                best_match = face_df.iloc[0]
+                best_match_path = best_match['identity']
+                confidence = float(best_match['confidence'])
+
+                if confidence > 60.0:
+                    filename = os.path.basename(best_match_path)
+                    name = os.path.splitext(filename)[0].capitalize()
+
+                    verdicts.append(f"{name}_{confidence:.2f}")
+                else:
+                    verdicts.append("unknown")
+            else:
+                verdicts.append("unknown")
+
+        return "|".join(verdicts)
+
+    except Exception as e:
+        if "Face could not be detected" in str(e):
+            return "no_face"
+
+        logging.error(f"Error in classify_person_optimized: {e}", exc_info=True)
+        return "error"
+
 
 
 def main():
@@ -91,7 +138,8 @@ def main():
                         # Step D: Action if human is detected
                         if best_confidence > 0.5:
                             logging.info(f"PERSON IN FRAME! Confidence: {best_confidence * 100:.1f}%")
-                            send_detection_to_server(frame, best_confidence)
+                            verdict = classify_person_optimized(frame, "known_faces")
+                            send_detection_to_server(frame, best_confidence, verdict)
                         else:
                             logging.info(f"Check: clear.")
 
