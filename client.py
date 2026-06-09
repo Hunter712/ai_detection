@@ -12,6 +12,13 @@ SERVER_URL = ""
 TIME_MASK = "%H%M%S_%d%m%Y"
 MODEL_PATH = "/usr/local/hailo/resources/models/hailo8l/yolov8s.hef"
 
+logging.basicConfig(
+    filename='client.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt=TIME_MASK
+)
+
 def send_detection_to_server(frame, confidence):
     # 1. Format elements for the filename
     timestamp_file = time.strftime(TIME_MASK)
@@ -41,13 +48,6 @@ def send_detection_to_server(frame, confidence):
 
 
 def main():
-    logging.basicConfig(
-        filename='client.log',
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'
-    )
-
     # 1. Initialize and start the camera
     picam2 = Picamera2()
     picam2.configure(picam2.create_video_configuration(main={"size": (640, 640), "format": "RGB888"}))
@@ -66,10 +66,10 @@ def main():
 
         with net_group.activate(net_group.create_params()), \
                 InferVStreams(net_group, input_vstreams_params, output_vstreams_params) as infer_vstreams:
-            logging.info("[SUCCESS] Monitoring started. AI analysis interval set to 10 seconds.")
+            logging.info("[SUCCESS] Monitoring started. AI analysis interval set to 3 seconds.")
 
             last_check = 0.0
-            check_interval = 5.0  # Check interval in seconds
+            check_interval = 3.0  # Check interval in seconds
 
             try:
                 while True:
