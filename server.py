@@ -6,12 +6,6 @@ import httpx  # Import asynchronous HTTP client
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks
 
 app = FastAPI()
-logging.basicConfig(
-    filename='server.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%H:%M:%S'
-)
 
 UPLOAD_DIR = "saved_photos"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -21,6 +15,12 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 TELEGRAM_BOT_TOKEN = ""
 TELEGRAM_CHAT_IDS = ["", ""]  # Your personal chat ID or group ID
 
+logging.basicConfig(
+    filename='server.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 async def send_to_single_chat(client: httpx.AsyncClient, url: str, chat_id: str, caption: str, filename: str,
                               file_content: bytes):
@@ -30,8 +30,6 @@ async def send_to_single_chat(client: httpx.AsyncClient, url: str, chat_id: str,
         response = await client.post(url, data=data, files=files, timeout=10)
         if response.status_code != 200:
             logging.error(f"[TG ERROR] Failed for {chat_id}: {response.status_code} - {response.text}")
-        else:
-            logging.info(f"[TG SUCCESS] Photo sent to chat {chat_id}")
     except Exception as e:
         logging.error(f"[TG ERROR] Connection failed for chat {chat_id}: {e}")
 

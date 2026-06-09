@@ -34,13 +34,9 @@ def send_detection_to_server(frame, confidence):
     try:
         # Prepare only the file, no text fields (payload) included
         files = {'photo': (filename, encoded_image.tobytes(), 'image/jpeg')}
-
-        logging.info(f"Sending photo to server...")
         response = requests.post(SERVER_URL, files=files, timeout=5)
 
-        if response.status_code == 200:
-            logging.info(f"Server sync successful: {response.text}")
-        else:
+        if response.status_code != 200:
             logging.error(f"Server returned status code: {response.status_code}")
 
     except requests.exceptions.RequestException as e:
@@ -52,11 +48,9 @@ def main():
     picam2 = Picamera2()
     picam2.configure(picam2.create_video_configuration(main={"size": (640, 640), "format": "RGB888"}))
     picam2.start()
-    logging.info("[OK] Camera started.")
 
     # 2. Load the compiled YOLOv8 HEF model
     hef = HEF(MODEL_PATH)
-    logging.info(f"[OK] Model {MODEL_PATH} successfully loaded.")
 
     # 3. Configure context and streams for the Hailo chip
     with VDevice() as target:
@@ -66,7 +60,6 @@ def main():
 
         with net_group.activate(net_group.create_params()), \
                 InferVStreams(net_group, input_vstreams_params, output_vstreams_params) as infer_vstreams:
-            logging.info("[SUCCESS] Monitoring started. AI analysis interval set to 3 seconds.")
 
             last_check = 0.0
             check_interval = 3.0  # Check interval in seconds
@@ -90,17 +83,11 @@ def main():
                         best_confidence = float(np.max(person_detections[:, 4])) if person_detections.shape[0] > 0 else 0.0
                         # Step D: Action if human is detected
                         if best_confidence > 0.5:
-                            logging.info(f"PERSON IN FRAME! Confidence: {best_confidence * 100:.1f}%")
                             send_detection_to_server(frame, best_confidence)
-                        else:
-                            logging.info(f"Check: clear.")
 
                         last_check = current_time
-            except KeyboardInterrupt:
-                logging.info("[EXIT] Program stopped by user.")
             finally:
                 picam2.stop()
-                logging.info("[OK] Camera disconnected. Task complete.")
 
 
 if __name__ == "__main__":
