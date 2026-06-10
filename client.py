@@ -62,8 +62,6 @@ def classify_person_optimized(image_to_check: str, database_dir: str):
             detector_backend="ssd",
             enforce_detection=True,
         )
-        if not results:
-            return "no_face"
 
         verdicts = []
         for face_df in results:
@@ -71,18 +69,16 @@ def classify_person_optimized(image_to_check: str, database_dir: str):
                 verdicts.append("unknown")
                 continue
 
-            if not face_df.empty:
-                best_match = face_df.iloc[0]
+            best_match = face_df.iloc[0]
+            confidence = float(best_match['confidence'])
+
+            if confidence > 50.0:
                 best_match_path = best_match['identity']
-                confidence = float(best_match['confidence'])
-
-                if confidence > 50.0:
-                    filename = os.path.basename(best_match_path)
-                    name = os.path.splitext(filename)[0].capitalize()
-
-                    verdicts.append(f"{name}_{confidence:.2f}")
-                else:
-                    verdicts.append("unknown")
+                filename = os.path.basename(best_match_path)
+                name = os.path.splitext(filename)[0].capitalize()
+                verdicts.append(f"{name}_{confidence:.2f}")
+            else:
+                verdicts.append("unknown")
 
         return "|".join(verdicts)
 
