@@ -24,7 +24,7 @@ TELEGRAM_CHAT_IDS = ["", ""]  # Your personal chat ID or group ID
 
 async def send_to_single_chat(client: httpx.AsyncClient, url: str, chat_id: str, caption: str, filename: str,
                               file_content: bytes):
-    data = {"chat_id": chat_id, "caption": caption, "parse_mode": "Markdown"}
+    data = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
     files = {"photo": (filename, file_content, "image/jpeg")}
     try:
         response = await client.post(url, data=data, files=files, timeout=10)
@@ -63,12 +63,8 @@ async def create_item(background_tasks: BackgroundTasks,photo: UploadFile = File
         content = await photo.read()
         await f.write(content)
 
-    # 2. Format the message text and send to Telegram
-    # The filename (e.g., person_110333_01062026_52.9%.jpg) provides context
-    tg_caption = f"🚨🚨🚨 **Person detected!**\nFile: {photo.filename}"
-
     # Trigger the sending process (FastAPI waits for this before responding to client)
-    background_tasks.add_task(send_photo_to_telegram, file_path, tg_caption)
+    background_tasks.add_task(send_photo_to_telegram, file_path, photo.filename)
 
     return {
         "message": "saved and sent to telegram",
