@@ -60,37 +60,36 @@ def classify_person_optimized(image_to_check: str, database_dir: str):
             db_path=database_dir,
             model_name="ArcFace",
             detector_backend="ssd",
-            enforce_detection=False,
+            enforce_detection=True,
         )
         if not results:
             return "no_face"
 
         verdicts = []
         for face_df in results:
+            if face_df.empty:
+                verdicts.append("unknown")
+                continue
 
             if not face_df.empty:
                 best_match = face_df.iloc[0]
                 best_match_path = best_match['identity']
                 confidence = float(best_match['confidence'])
 
-                if confidence > 60.0:
+                if confidence > 50.0:
                     filename = os.path.basename(best_match_path)
                     name = os.path.splitext(filename)[0].capitalize()
 
                     verdicts.append(f"{name}_{confidence:.2f}")
                 else:
                     verdicts.append("unknown")
-            else:
-                verdicts.append("unknown")
 
         return "|".join(verdicts)
 
     except Exception as e:
         if "Face could not be detected" in str(e):
-            return "no_face"
-
-        logging.error(f"Error in classify_person_optimized: {e}", exc_info=True)
-        return "error"
+            return "no_face_found"
+        return f"Error: {e}"
 
 
 
