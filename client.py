@@ -31,7 +31,7 @@ output_vstreams_params = None
 
 
 @asynccontextmanager
-async def lifespan():
+async def lifespan(app: FastAPI):
     global picam2, target_vdevice, net_group, input_vstreams_params, output_vstreams_params
 
     logging.info("Initializing hardware resources...")
