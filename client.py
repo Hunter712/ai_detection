@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 import httpx
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Response, status
 from picamera2 import Picamera2
 from hailo_platform import (HEF, VDevice, HailoStreamInterface, ConfigureParams,
                             InputVStreamParams, OutputVStreamParams, FormatType, InferVStreams)
@@ -61,9 +61,7 @@ app = FastAPI(lifespan=lifespan)
 
 
 async def send_photo_task(frame: np.ndarray, confidence: float):
-    timestamp_file = time.strftime(TIME_MASK)
-    conf_percent = f"{confidence * 100:.1f}"
-    filename = f"person_{timestamp_file}_{conf_percent}%.jpg"
+    filename = f"person_{time.strftime(TIME_MASK)}_{confidence * 100:.1f}%.jpg"
 
     success, encoded_image = cv2.imencode('.jpg', frame)
     if not success:
@@ -119,7 +117,7 @@ async def trigger_motion(background_tasks: BackgroundTasks):  # Сделали �
     if best_confidence > 0.5 and best_frame is not None:
         background_tasks.add_task(send_photo_task, best_frame, best_confidence)
 
-    return {"status": "done", "max_confidence": best_confidence}
+    return Response(status_code=status.HTTP_200_OK)
 
 
 if __name__ == "__main__":
