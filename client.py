@@ -1,22 +1,19 @@
-import os
-os.environ["OMP_NUM_THREADS"] = "2"
-os.environ["TF_NUM_INTRAOP_THREADS"] = "2"
-os.environ["TF_NUM_INTEROP_THREADS"] = "2"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
+import asyncio
 import time
 import logging
+from contextlib import asynccontextmanager
 import numpy as np
 import cv2
-import requests
+import httpx
+import uvicorn
+from fastapi import FastAPI, BackgroundTasks
 from picamera2 import Picamera2
 from hailo_platform import (HEF, VDevice, HailoStreamInterface, ConfigureParams,
                             InputVStreamParams, OutputVStreamParams, FormatType, InferVStreams)
-from deepface import DeepFace
 
-# Configuration: Change this to your actual backend server IP and port
-SERVER_URL = ""
-TIME_MASK = "%H.%M.%S_%d.%m.%Y"
+TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_CHAT_ID = ""
+TIME_MASK = "%H%M%S_%d%m%Y"
 MODEL_PATH = "/usr/local/hailo/resources/models/hailo8l/yolov8s.hef"
 
 logging.basicConfig(
@@ -26,113 +23,104 @@ logging.basicConfig(
     datefmt=TIME_MASK
 )
 
-def send_detection_to_server(frame, confidence, verdict):
-    # 1. Format elements for the filename
-    timestamp_file = time.strftime(TIME_MASK)
-    conf_percent = f"{confidence * 100:.1f}"
-    filename = f"person_detected_{conf_percent}%_[{verdict}]_{timestamp_file}.jpg"
-
-    # 2. Encode the frame to JPEG directly in RAM
-    success, encoded_image = cv2.imencode('.jpg', frame)
-    if not success:
-        logging.error(f"Failed to encode image in memory.")
-        return
-
-    try:
-        # Prepare only the file, no text fields (payload) included
-        files = {'photo': (filename, encoded_image.tobytes(), 'image/jpeg')}
-
-        response = requests.post(SERVER_URL, files=files, timeout=5)
-
-        if response.status_code != 200:
-            logging.error(f"Server returned status code: {response.status_code}")
-
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Failed to connect to server: {e}")
-
-def classify_person_optimized(image_to_check: str, database_dir: str):
-    try:
-        results = DeepFace.find(
-            img_path=image_to_check,
-            db_path=database_dir,
-            model_name="ArcFace",
-            detector_backend="ssd",
-            enforce_detection=True,
-        )
-
-        verdicts = []
-        for face_df in results:
-            if face_df.empty:
-                verdicts.append("unknown")
-                continue
-
-            best_match = face_df.iloc[0]
-            confidence = float(best_match['confidence'])
-
-            if confidence > 65.0:
-                best_match_path = best_match['identity']
-                filename = os.path.basename(best_match_path)
-                name = os.path.splitext(filename)[0].capitalize()
-                verdicts.append(f"{name}_{confidence:.1f}%")
-            else:
-                verdicts.append("unknown")
-
-        return "|".join(verdicts)
-
-    except Exception as e:
-        if "Face could not be detected" in str(e):
-            return "no_face"
-        return f"Error: {e}"
+picam2 = None
+target_vdevice = None
+net_group = None
+input_vstreams_params = None
+output_vstreams_params = None
 
 
+@asynccontextmanager
+async def lifespan():
+    global picam2, target_vdevice, net_group, input_vstreams_params, output_vstreams_params
 
-def main():
-    # 1. Initialize and start the camera
+    logging.info("Initializing hardware resources...")
     picam2 = Picamera2()
     picam2.configure(picam2.create_video_configuration(main={"size": (640, 640), "format": "RGB888"}))
     picam2.start()
 
-    # 2. Load the compiled YOLOv8 HEF model
     hef = HEF(MODEL_PATH)
+    target_vdevice = VDevice()
+    target_vdevice.__enter__()
 
-    # 3. Configure context and streams for the Hailo chip
-    with VDevice() as target:
-        net_group = target.configure(hef, ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe))[0]
-        input_vstreams_params = InputVStreamParams.make(net_group, format_type=FormatType.UINT8)
-        output_vstreams_params = OutputVStreamParams.make(net_group, format_type=FormatType.FLOAT32)
+    net_group = target_vdevice.configure(hef, ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe))[0]
+    input_vstreams_params = InputVStreamParams.make(net_group, format_type=FormatType.UINT8)
+    output_vstreams_params = OutputVStreamParams.make(net_group, format_type=FormatType.FLOAT32)
 
-        with net_group.activate(net_group.create_params()), \
-                InferVStreams(net_group, input_vstreams_params, output_vstreams_params) as infer_vstreams:
+    yield
 
-            last_check = 0.0
-            check_interval = 3.0  # Check interval in seconds
+    logging.info("Cleaning up resources...")
+    if picam2:
+        picam2.stop()
+    if target_vdevice:
+        target_vdevice.__exit__(None, None, None)
+    logging.info("Resources successfully cleared.")
 
-            try:
-                while True:
-                    # Step A: Capture a frame on every cycle to keep the buffer fresh
-                    frame = picam2.capture_array()
-                    current_time = time.time()
 
-                    # Step B: Check if 10 seconds have passed since the last analysis
-                    if current_time - last_check >= check_interval:
+app = FastAPI(lifespan=lifespan)
 
-                        input_data = np.expand_dims(frame, axis=0).astype(np.uint8)
-                        infer_results = infer_vstreams.infer(input_data)
 
-                        nms_output = infer_results['yolov8s/yolov8_nms_postprocess']
-                        coco_classes = nms_output[0]
-                        person_detections = coco_classes[0]
+async def send_photo_task(frame: np.ndarray, confidence: float):
+    timestamp_file = time.strftime(TIME_MASK)
+    conf_percent = f"{confidence * 100:.1f}"
+    filename = f"person_{timestamp_file}_{conf_percent}%.jpg"
 
-                        best_confidence = float(np.max(person_detections[:, 4])) if person_detections.shape[0] > 0 else 0.0
-                        # Step D: Action if human is detected
-                        if best_confidence > 0.5:
-                            verdict = classify_person_optimized(frame, "known_faces")
-                            send_detection_to_server(frame, best_confidence, verdict)
+    success, encoded_image = cv2.imencode('.jpg', frame)
+    if not success:
+        logging.error("Failed to encode image in memory.")
+        return
 
-                        last_check = current_time
-            finally:
-                picam2.stop()
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    data = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "caption": f"🚨<b>Person detected!</b>\n<b>File:</b> {filename}",
+        "parse_mode": "HTML"
+    }
+    files = {"photo": (filename, encoded_image.tobytes(), "image/jpeg")}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            response = await client.post(url, data=data, files=files)
+
+            if response.status_code != 200:
+                logging.error(f"[TG ERROR] Failed: {response.status_code} - {response.text}")
+
+        except Exception as e:
+            logging.error(f"[TG ERROR] Connection failed: {e}")
+
+
+@app.post("/trigger")
+async def trigger_motion(background_tasks: BackgroundTasks):  # Сделали функцию ASYNC
+    global picam2, net_group, input_vstreams_params, output_vstreams_params
+
+    best_confidence = 0.0
+    best_frame = None
+    frames_to_capture = 5
+
+    with net_group.activate(net_group.create_params()), \
+            InferVStreams(net_group, input_vstreams_params, output_vstreams_params) as infer_vstreams:
+
+        for i in range(frames_to_capture):
+            frame = picam2.capture_array()
+
+            input_data = np.expand_dims(frame, axis=0).astype(np.uint8)
+            infer_results = infer_vstreams.infer(input_data)
+
+            person_detections = infer_results['yolov8s/yolov8_nms_postprocess'][0][0]
+            confidence = float(np.max(person_detections[:, 4])) if person_detections.shape[0] > 0 else 0.0
+
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_frame = frame.copy()
+
+            if i < frames_to_capture - 1:
+                await asyncio.sleep(0.05)
+
+    if best_confidence > 0.5 and best_frame is not None:
+        background_tasks.add_task(send_photo_task, best_frame, best_confidence)
+
+    return {"status": "done", "max_confidence": best_confidence}
 
 
 if __name__ == "__main__":
-    main()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
